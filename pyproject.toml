@@ -1,7 +1,7 @@
 [project]
-name = "vstim-python-tools"
+name = "vstim"
 version = "0.1.0"
-description = "Add your description here"
+description = "Python Tools for VStim"
 readme = "README.md"
 authors = [{ name = "Joscha Schmiedt", email = "schmiedt@uni-bremen.de" }]
 requires-python = ">=3.11"
