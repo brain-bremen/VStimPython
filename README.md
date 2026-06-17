@@ -8,3 +8,28 @@ Bremen.
 
 In future versions, tools for remote controlling/scripting VStim, manipulating the config
 files and event files may be added.
+
+## Tools
+
+### tdr-to-csv
+
+Converts a TDR file to CSV with one row per trial, including trial index, trial type,
+outcome, reaction time, and trial start/end times.
+
+**Install and run with uv (no manual install needed):**
+
+```bash
+uvx --from "git+https://github.com/brain-bremen/VStimPython" tdr-to-csv path/to/file.tdr
+```
+
+This writes `path/to/file.csv` next to the input file. To specify the output path explicitly:
+
+```bash
+uvx --from "git+https://github.com/brain-bremen/VStimPython" tdr-to-csv path/to/file.tdr path/to/output.csv
+```
+
+**If the package is already installed:**
+
+```bash
+tdr-to-csv path/to/file.tdr
+```

@@ -1,11 +1,17 @@
 [project]
 name = "vstim"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python Tools for VStim"
 readme = "README.md"
 authors = [{ name = "Joscha Schmiedt", email = "schmiedt@uni-bremen.de" }]
 requires-python = ">=3.11"
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/brain-bremen/VStimPython"
+
+[project.scripts]
+tdr-to-csv = "vstim.tdr_to_csv:main"
 
 [build-system]
 requires = ["setuptools", "setuptools-scm"]
