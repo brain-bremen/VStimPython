@@ -30,9 +30,23 @@ def convert(tdr_path: pathlib.Path, csv_path: pathlib.Path) -> None:
     print(f"Wrote {len(trials)} trials to {csv_path}")
 
 
+def _pick_tdr_file() -> pathlib.Path | None:
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    path = filedialog.askopenfilename(
+        title="Select TDR file",
+        filetypes=[("TDR files", "*.tdr"), ("All files", "*.*")],
+    )
+    root.destroy()
+    return pathlib.Path(path) if path else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Convert TDR to CSV.")
-    parser.add_argument("tdr_file", type=pathlib.Path, help="Input .tdr file")
+    parser.add_argument("tdr_file", type=pathlib.Path, nargs="?", help="Input .tdr file")
     parser.add_argument(
         "csv_file",
         type=pathlib.Path,
@@ -41,12 +55,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.tdr_file.exists():
-        print(f"Error: {args.tdr_file} not found", file=sys.stderr)
+    tdr_path = args.tdr_file
+    if tdr_path is None:
+        tdr_path = _pick_tdr_file()
+        if tdr_path is None:
+            print("No file selected.", file=sys.stderr)
+            sys.exit(1)
+
+    if not tdr_path.exists():
+        print(f"Error: {tdr_path} not found", file=sys.stderr)
         sys.exit(1)
 
-    csv_path = args.csv_file or args.tdr_file.with_suffix(".csv")
-    convert(args.tdr_file, csv_path)
+    csv_path = args.csv_file or tdr_path.with_suffix(".csv")
+    convert(tdr_path, csv_path)
 
 
 if __name__ == "__main__":
