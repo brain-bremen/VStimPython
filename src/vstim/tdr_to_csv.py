@@ -14,7 +14,7 @@ def convert(tdr_path: pathlib.Path, csv_path: pathlib.Path) -> None:
 
     with csv_path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["trialno", "trialtype", "outcome", "reactionTimeMS", "trialStartS", "trialEndS"])
+        writer.writerow(["trialno", "trialtype", "outcome", "outcome_int", "reactionTimeMS", "trialStartS", "trialEndS"])
         for trial in trials:
             start_s = trial.tRelTrialStartMIN * 60.0
             end_s = start_s + trial.get_trial_duration() / 1000.0
@@ -22,6 +22,7 @@ def convert(tdr_path: pathlib.Path, csv_path: pathlib.Path) -> None:
                 trial.trialNumber,
                 trial.stimulusNumber,
                 trial.outcome.name,
+                trial.outcome.value,
                 trial.reactionTimeMS,
                 round(start_s, 6),
                 round(end_s, 6),
