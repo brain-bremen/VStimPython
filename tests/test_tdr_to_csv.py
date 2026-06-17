@@ -24,7 +24,7 @@ def test_convert_columns(tmp_path):
     out = tmp_path / "output.csv"
     convert(TEST_TDR, out)
     rows = read_csv(out)
-    assert rows[0].keys() == {"trialno", "trialtype", "outcome", "reactionTimeMS", "trialStartS", "trialEndS"}
+    assert rows[0].keys() == {"trialno", "trialtype", "outcome", "outcome_int", "reactionTimeMS", "trialStartS", "trialEndS"}
 
 
 def test_convert_row_count(tmp_path):

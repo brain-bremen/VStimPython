@@ -109,7 +109,7 @@ def test_TrialHeader():
     header: tdr.TrialHeader = tdr.TrialHeader.from_lines(lines)
     assert header.id == tdr.HeaderId.TH1
     assert header.nLines == 5
-    assert header.headerVersion == 5
+    assert header.headerVersion == 6
     assert header.trialNumber == 368
     assert header.timeSequence == 6
     assert header.wasPerfectMonkey == False
