@@ -258,7 +258,7 @@ class TrialHeader(Header):
 
     id: HeaderId = HeaderId.TH1
     nLines: int = 5
-    headerVersion: int = 5
+    headerVersion: int = 6
     trialNumber: int
     stimulusNumber: int
     timeSequence: int
@@ -285,7 +285,7 @@ class TrialHeader(Header):
         id, nLinesStr, version = tokens[0:3]
 
         assert HeaderId.TH1.value == id
-        assert TrialHeader.headerVersion == int(version)
+        assert int(version) in (5, 6)
         if int(version) >= 6:
             assert TrialHeader.nLines == int(nLinesStr)
 
