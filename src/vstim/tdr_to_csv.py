@@ -16,7 +16,12 @@ def convert(tdr_path: pathlib.Path, csv_path: pathlib.Path) -> None:
         writer = csv.writer(f)
         writer.writerow(["trialno", "trialtype", "outcome", "outcome_int", "reactionTimeMS", "trialStartS", "trialEndS"])
         for trial in trials:
-            start_s = trial.tRelTrialStartMIN * 60.0
+            # tRelTrialStartMIN exists only since VStim 1.42; older files: wall clock (1 s resolution)
+            start_s = (
+                trial.tRelTrialStartMIN * 60.0
+                if trial.tRelTrialStartMIN is not None
+                else trial.tClockStartS
+            )
             end_s = start_s + trial.get_trial_duration() / 1000.0
             writer.writerow([
                 trial.trialNumber,
