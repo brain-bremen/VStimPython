@@ -1,6 +1,6 @@
 [project]
 name = "vstim"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python Tools for VStim"
 readme = "README.md"
 authors = [{ name = "Joscha Schmiedt", email = "schmiedt@uni-bremen.de" }]

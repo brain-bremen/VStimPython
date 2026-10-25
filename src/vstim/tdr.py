@@ -15,6 +15,7 @@ def remove_comment(line: str):
 class HeaderId(Enum):
     FH1 = "$FH1"
     FH2 = "$FH2"
+    FH3 = "$FH3"
     TH1 = "$TH1"
     TS1 = "$TS1"
     TS2 = "$TS2"
@@ -55,35 +56,82 @@ class FileStartHeader(Header):
 
     @staticmethod
     def from_lines(lines: list[str]):
+        """Versions 1 and 2 (VStim <= 1.41, e.g. the 2004-2006 recordings) have no .ini
+        line; version 1 also has no refresh rate; nLines counts the header line itself."""
         new = FileStartHeader()
         # line 1
-        id, nLines, version = lines[0].split()
+        id, nLines, version = lines[0].split()[:3]
         assert new.id.value == id
-        assert new.nLines == int(nLines)
-        assert new.headerVersion == int(version)
+        new.nLines = int(nLines)
+        new.headerVersion = int(version)
+        assert new.headerVersion in (1, 2, 3), f"unsupported $FH1 version {version}"
 
         # line 2
-        new.vstimVersion = remove_comment(lines[1])
+        new.vstimVersion = remove_comment(lines[1]).strip()
 
         # line 3
-        new.tdrVersion = remove_comment(lines[2])
+        new.tdrVersion = remove_comment(lines[2]).strip()
 
         # line 4
-        new.date, new.startTime, new.refreshRate = remove_comment(lines[3]).split()
-        new.date = datetime.datetime.strptime(new.date, "%d.%m.%Y").date()
-        new.startTime = datetime.datetime.strptime(new.startTime, "%H:%M:%S").time()
-        new.refreshRate = float(new.refreshRate)
+        tokens = remove_comment(lines[3]).split()
+        new.date = datetime.datetime.strptime(tokens[0], "%d.%m.%Y").date()
+        new.startTime = datetime.datetime.strptime(tokens[1], "%H:%M:%S").time()
+        new.refreshRate = float(tokens[2]) if len(tokens) > 2 else None
 
-        # line 5
-        new.iniFile = remove_comment(lines[4])
+        # line 5 (version 3 only)
+        if new.headerVersion >= 3:
+            new.iniFile = remove_comment(lines[4])
         return new
 
 
 @dataclass(kw_only=True)
-class FileEndHeader(Header): ...
+class FileEndHeader(Header):
+    """$FH2 (since TDR 1.12): end time and trial counts. Count order as documented:
+    nAll nDone nNotStartedErr nEyeErr nEarlyErr nEarlyHit nEarlyWrongRespErr nHit
+    nWrongRespErr nLateErr nInexpStartErr nWrongStartErr nFrameLossErr (older files may
+    have fewer entries)."""
+
+    id: HeaderId = HeaderId.FH2
+    nLines: int = 3
+    headerVersion: int = 1
+    endTime: datetime.datetime = None
+    counts: list[int] = None
+
+    @staticmethod
+    def from_lines(lines: list[str]):
+        id, nLines, version = lines[0].split()[:3]
+        new = FileEndHeader(nLines=int(nLines), headerVersion=int(version))
+        new.endTime = datetime.datetime.strptime(
+            remove_comment(lines[1]).strip(), "%Y-%m-%d %H:%M:%S"
+        )
+        data = [remove_comment(l).split() for l in lines[2:] if not l.startswith("//")]
+        new.counts = [int(t) for t in data[0]] if data and data[0] else []
+        return new
+
+
+@dataclass(kw_only=True)
+class SessionMetadataHeader(Header):
+    """$FH3 (since TDR 1.18): one line of JSON session metadata after the identifier."""
+
+    id: HeaderId = HeaderId.FH3
+    nLines: int = 1
+    headerVersion: int = 1
+    metadata: dict = None
+
+    @staticmethod
+    def from_lines(lines: list[str]):
+        import json
+
+        id, nLines, version, payload = lines[0].split(None, 3)
+        return SessionMetadataHeader(
+            nLines=int(nLines), headerVersion=int(version), metadata=json.loads(payload)
+        )
 
 
 class TrialOutcome(Enum):
+    """Trial result codes (VStim ``VStimLib/TDR.h``)."""
+
+    Undetermined = -1
     NotStarted = 0
     Hit = 1
     WrongResponse = 2
@@ -94,6 +142,18 @@ class TrialOutcome(Enum):
     EyeErr = 7
     InexpectedStartSignal = 8
     WrongStartSignal = 9
+    Cancelled = 10  # since VStim 2.50
+
+    @classmethod
+    def _missing_(cls, value):
+        """Codes of newer VStim versions: keep the value instead of failing to read the file."""
+        if not isinstance(value, int):
+            return None
+        warnings.warn(f"Unknown trial outcome code {value}", category=UserWarning)
+        member = object.__new__(cls)
+        member._name_ = f"Unknown{value}"
+        member._value_ = value
+        return member
 
 
 class Manipulandum(Enum):
@@ -160,14 +220,20 @@ class TrialSubheader1(Header):
 
         assert new.id.value == id
         assert new.nLines == int(nLines)
-        assert new.headerVersion == int(version)
 
+        new.headerVersion = int(version)
         new.trialNumber = int(tokens[3])
         new.tAbsTrialStart = tokens[4]
-        new.tRelTrialStartMIN = float(tokens[5]) / 60.0 / 10000.0
+        # version 3 (VStim >= 1.42) adds the performance-counter time in 0.1 ms ticks;
+        # versions 1/2 have only the clock time (1 s resolution)
+        first = 5
+        if new.headerVersion >= 3:
+            new.tRelTrialStartMIN = float(tokens[5]) / 60.0 / 10000.0
+            first = 6
 
-        new.tPositiveTriggerTransitionMS = [float(t) * 1000 for t in tokens[6::2]]
-        new.tNegativeTriggerTransitionMS = [float(t) * 1000 for t in tokens[7::2]]
+        # version 1: 32 virtual trigger lines, version >= 2: 48 (number follows from the line length)
+        new.tPositiveTriggerTransitionMS = [float(t) * 1000 for t in tokens[first::2]]
+        new.tNegativeTriggerTransitionMS = [float(t) * 1000 for t in tokens[first + 1 :: 2]]
         return new
 
 
@@ -259,52 +325,80 @@ class TrialHeader(Header):
     id: HeaderId = HeaderId.TH1
     nLines: int = 5
     headerVersion: int = 6
-    trialNumber: int
-    stimulusNumber: int
-    timeSequence: int
-    wasPerfectMonkey: bool
-    wasHit: bool
-    outcome: TrialOutcome
-    manipulandum: Manipulandum
-    wasPreciseFixation: bool
-    reactionTimeMS: float
-    rewardDurationMS: float
-    lastInterval: int
-    eyeControlFlag: bool
-    intervalOfFrameLoss: int
-    timeOfFrameLoss: float
+    trialNumber: int = None
+    stimulusNumber: int = None
+    timeSequence: int = None
+    wasPerfectMonkey: bool = None  # since $TH1 v5 (VStim 1.42)
+    wasHit: bool = None  # since v5
+    outcome: TrialOutcome = None
+    manipulandum: Manipulandum = None
+    wasPreciseFixation: bool = None  # since v5
+    reactionTimeMS: float = None
+    rewardDurationMS: float = None  # since v5
+    lastInterval: int = None  # since v4 (VStim 1.40)
+    eyeControlFlag: bool = None  # since v3 (VStim 1.38)
+    intervalOfFrameLoss: int = None  # since v3
+    timeOfFrameLoss: float = None  # since v3
     subheader1: TrialSubheader1 = None
-    subheader2: TrialSubheader2 = None
-    subheader3: TrialSubheader3 = None
-    subheader4: TrialSubheader4 = None
+    subheader2: TrialSubheader2 = None  # since VStim 1.42
+    subheader3: TrialSubheader3 = None  # since VStim 1.42
+    subheader4: TrialSubheader4 = None  # since VStim 1.46
 
     @staticmethod
     def from_lines(lines: list[str]):
-        # line 1
+        """Parse a $TH1 record. Before VStim 1.40 the version field was always written as 1
+        even though the layout grew (see TDR change history), so the layout is detected from
+        the number of tokens of the first line:
+
+        =======  ===========================================================
+        tokens   layout
+        =======  ===========================================================
+        9        v1/v2: trial, stim, timeSeq, result, manipulandum, RT
+        12       v3: + eyeControl, intervalOfFrameLoss, timeOfFrameLoss
+        13       v4: RT, terminatingInterval, eyeControl, itvFL, timeFL
+        17       v5/v6: perfect, hit, result, manip, precise, RT, reward, ...
+        =======  ===========================================================
+        """
         tokens = lines[0].split()
         id, nLinesStr, version = tokens[0:3]
 
         assert HeaderId.TH1.value == id
-        assert int(version) in (5, 6)
-        if int(version) >= 6:
-            assert TrialHeader.nLines == int(nLinesStr)
-
-        new = TrialHeader(
-            trialNumber=int(tokens[3]),
-            stimulusNumber=int(tokens[4]),
-            timeSequence=int(tokens[5]),
-            wasPerfectMonkey=bool(int(tokens[6])),
-            wasHit=bool(int(tokens[7])),
-            outcome=TrialOutcome(int(tokens[8])),
-            manipulandum=Manipulandum(int(tokens[9])),
-            wasPreciseFixation=bool(int(tokens[10])),
-            reactionTimeMS=float(tokens[11]),
-            rewardDurationMS=float(tokens[12]),
-            lastInterval=int(tokens[13]),
-            eyeControlFlag=bool(int(tokens[14])),
-            intervalOfFrameLoss=int(tokens[15]),
-            timeOfFrameLoss=float(tokens[16]),
-        )
+        if len(tokens) >= 17:
+            # v5/v6 (VStim >= 1.42): keep the class defaults (nLines=5, version=6), as before;
+            # v5 reports 4 lines but has 5 (VStim bug #210, see read_tdr)
+            new = TrialHeader()
+        else:
+            # older layouts: record what the file says (the version is unreliable, see above)
+            new = TrialHeader(headerVersion=int(version), nLines=int(nLinesStr))
+        new.trialNumber = int(tokens[3])
+        new.stimulusNumber = int(tokens[4])
+        new.timeSequence = int(tokens[5])
+        n = len(tokens)
+        if n >= 17:  # v5, v6
+            new.wasPerfectMonkey = bool(int(tokens[6]))
+            new.wasHit = bool(int(tokens[7]))
+            new.outcome = TrialOutcome(int(tokens[8]))
+            new.manipulandum = Manipulandum(int(tokens[9]))
+            new.wasPreciseFixation = bool(int(tokens[10]))
+            new.reactionTimeMS = float(tokens[11])
+            new.rewardDurationMS = float(tokens[12])
+            new.lastInterval = int(tokens[13])
+            new.eyeControlFlag = bool(int(tokens[14]))
+            new.intervalOfFrameLoss = int(tokens[15])
+            new.timeOfFrameLoss = float(tokens[16])
+        elif n in (9, 12, 13):  # v1/v2, v3, v4
+            new.outcome = TrialOutcome(int(tokens[6]))
+            new.manipulandum = Manipulandum(int(tokens[7]))
+            new.reactionTimeMS = float(tokens[8])
+            if n == 13:
+                new.lastInterval = int(tokens[9])
+                tokens = tokens[:9] + tokens[10:]
+            if n >= 12:
+                new.eyeControlFlag = bool(int(tokens[9]))
+                new.intervalOfFrameLoss = int(tokens[10])
+                new.timeOfFrameLoss = float(tokens[11])
+        else:
+            raise ValueError(f"unexpected $TH1 line with {n} tokens: {lines[0]!r}")
 
         # process subheaders
         lines = lines[1:]
@@ -419,6 +513,7 @@ ObjectTypeNameMap = {
 HeaderIdMap: dict[HeaderId, type[Header]] = {
     HeaderId.FH1: FileStartHeader,
     HeaderId.FH2: FileEndHeader,
+    HeaderId.FH3: SessionMetadataHeader,
     HeaderId.TH1: TrialHeader,
     HeaderId.OH1: ObjectHeader,
 }
@@ -454,6 +549,10 @@ class Trial:
     tPositiveTriggerTransitionMS: list[float] = None
     tNegativeTriggerTransitionMS: list[float] = None
 
+    # derived: seconds from the file start time ($FH1) to the trial start, from the wall
+    # clock in $TS1 (1 s resolution; the only trial start time in files before VStim 1.42)
+    tClockStartS: float = None
+
     # from $TS2
     tIntendedIntervalDurationMS: list[float] = None
 
@@ -482,20 +581,19 @@ class Trial:
         self.intervalOfFrameLoss = header.intervalOfFrameLoss
         self.timeOfFrameLoss = header.timeOfFrameLoss
 
-        self.tAbsTrialStart = header.subheader1.tAbsTrialStart
-        self.tRelTrialStartMIN = header.subheader1.tRelTrialStartMIN
-        self.tPositiveTriggerTransitionMS = (
-            header.subheader1.tPositiveTriggerTransitionMS
-        )
-        self.tNegativeTriggerTransitionMS = (
-            header.subheader1.tNegativeTriggerTransitionMS
-        )
-
-        self.tIntendedIntervalDurationMS = header.subheader2.tIntendedIntervalDurationMS
-
-        self.intervalType = header.subheader3.intervalType
-
-        self.signals = header.subheader4.signals
+        sh1, sh2, sh3, sh4 = header.subheader1, header.subheader2, header.subheader3, header.subheader4
+        if sh1 is not None:
+            self.tAbsTrialStart = sh1.tAbsTrialStart
+            self.tRelTrialStartMIN = sh1.tRelTrialStartMIN
+            self.tPositiveTriggerTransitionMS = sh1.tPositiveTriggerTransitionMS
+            self.tNegativeTriggerTransitionMS = sh1.tNegativeTriggerTransitionMS
+        # $TS2-$TS4 do not exist in files written by VStim < 1.42 / 1.46
+        if sh2 is not None:
+            self.tIntendedIntervalDurationMS = sh2.tIntendedIntervalDurationMS
+        if sh3 is not None:
+            self.intervalType = sh3.intervalType
+        if sh4 is not None:
+            self.signals = sh4.signals
 
     def get_trial_duration(self) -> float:
         """Returns the total duration of the trial in milliseconds."""
@@ -503,24 +601,29 @@ class Trial:
 
     def get_trial_duration_after_start_signal(self) -> float | None:
         """Returns the duration of the trial from the end of the first interval waiting for a start signal in milliseconds."""
-        iFirstWaitForStartInterval = self.intervalType.index(
-            IntervalType.WaitForStartSignal
-        )
-        if iFirstWaitForStartInterval is None:
+        if self.intervalType is None:  # no $TS3 in this file
+            return None
+        try:
+            iFirstWaitForStartInterval = self.intervalType.index(
+                IntervalType.WaitForStartSignal
+            )
+        except ValueError:
             return None
 
         intervalDurations = self.get_interval_durations()
         return sum(intervalDurations[iFirstWaitForStartInterval + 1 :])
 
     def get_interval_durations(self) -> list[float]:
-        """Returns the durations of the intervals in milliseconds."""
+        """Returns the durations of the intervals in milliseconds.
+        Virtual trigger lines 0-19 are the intervals; a transition time < 0 means "did not occur"
+        (interval 0 starts at t = 0)."""
         return [
             t2 - t1
             for t1, t2 in zip(
                 self.tPositiveTriggerTransitionMS[:nIntervals],
                 self.tNegativeTriggerTransitionMS[:nIntervals],
             )
-            if t1 > 0.0 and t2 > 0.0
+            if t1 >= 0.0 and t2 > 0.0
         ]
 
 
@@ -531,10 +634,15 @@ class TdrFile:
 
     def get_trials(self) -> list[Trial]:
         trials: list[Trial] = []
+        start = next((h for h in self.headers if isinstance(h, FileStartHeader)), None)
         for header in self.headers:
             if isinstance(header, TrialHeader):
                 trial = Trial()
                 trial.from_trial_header(header)
+                if start is not None and trial.tAbsTrialStart:
+                    t = datetime.datetime.strptime(trial.tAbsTrialStart, "%H:%M:%S").time()
+                    secs = lambda x: x.hour * 3600 + x.minute * 60 + x.second
+                    trial.tClockStartS = (secs(t) - secs(start.startTime)) % 86400
                 trials.append(trial)
             if isinstance(header, ObjectHeader):
                 trials[-1].stimulusObjects.append(header)
@@ -596,7 +704,8 @@ class TdrFile:
 
 
 def read_tdr(filename: pathlib.Path) -> TdrFile:
-    with open(filename, "r") as file:
+    # old files contain non-UTF-8 characters (Windows-1252 user/ini names)
+    with open(filename, "r", encoding="latin-1") as file:
         lines: list[str] = file.readlines()
 
     headers: list[Header] = []
@@ -605,7 +714,8 @@ def read_tdr(filename: pathlib.Path) -> TdrFile:
         if not line.startswith("$"):
             continue
 
-        line = remove_comment(line)
+        if not line.startswith("$FH3"):
+            line = remove_comment(line)
 
         headerId, nLines, headerVersion = line.split()[:3]
         nLines = int(nLines)
