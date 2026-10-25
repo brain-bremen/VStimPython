@@ -157,3 +157,20 @@ def test_ObjectHeader():
     assert header.typeName == "Morph PDF 1"
 
     # TODO: add tests for ObjectSubheader1
+
+
+def test_outcomes_cancelled_and_unknown():
+    """test_outcomes.tdr (VStim 2.49, TDR 1.18) has cancelled trials (outcome 10)."""
+    import warnings
+
+    from vstim.tdr import TrialOutcome
+
+    tdr_file = tdr.read_tdr(pathlib.Path(__file__).parent / "test_outcomes.tdr")
+    outcomes = [trial.outcome for trial in tdr_file.get_trials()]
+    assert TrialOutcome.Cancelled in outcomes
+    assert tdr_file.get_outcome_counts()["Cancelled"] == outcomes.count(TrialOutcome.Cancelled)
+    assert TrialOutcome(-1) is TrialOutcome.Undetermined
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        unknown = TrialOutcome(42)
+    assert unknown.value == 42 and unknown.name == "Unknown42" and caught

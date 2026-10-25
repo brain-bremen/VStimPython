@@ -129,6 +129,9 @@ class SessionMetadataHeader(Header):
 
 
 class TrialOutcome(Enum):
+    """Trial result codes (VStim ``VStimLib/TDR.h``)."""
+
+    Undetermined = -1
     NotStarted = 0
     Hit = 1
     WrongResponse = 2
@@ -140,6 +143,17 @@ class TrialOutcome(Enum):
     InexpectedStartSignal = 8
     WrongStartSignal = 9
     Cancelled = 10  # since VStim 2.50
+
+    @classmethod
+    def _missing_(cls, value):
+        """Codes of newer VStim versions: keep the value instead of failing to read the file."""
+        if not isinstance(value, int):
+            return None
+        warnings.warn(f"Unknown trial outcome code {value}", category=UserWarning)
+        member = object.__new__(cls)
+        member._name_ = f"Unknown{value}"
+        member._value_ = value
+        return member
 
 
 class Manipulandum(Enum):
